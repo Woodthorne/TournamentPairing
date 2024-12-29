@@ -1,9 +1,14 @@
+import random
+
 from player import Player
+
 
 class Logic:
     def __init__(self):
         self.active_tournament = False
         self.players: list[Player] = []
+        self.round = 0
+        self._buy = Player('BUY')
 
     def add_player(self, name: str) -> bool:
         if name in [player.name for player in self.players]:
@@ -14,10 +19,12 @@ class Logic:
         self.players.append(player)
         return True
 
-    def setup_tournament(self) -> None:
-        if len(self.players) % 2 != 0:
-            self.players.append(Player('BUY'))
-        self.round = 1
+    def next_round(self) -> None:
+        if 2 ** self.round >= len(self.players):
+            return False
+        
+        self.round += 1
+        return True
     
     def create_pairings(self) -> list[tuple[Player, Player]]:
         pairings = []
@@ -29,13 +36,54 @@ class Logic:
                 pairing = []
         return pairings
 
-
-        ranked_players = sorted(self.players, key=lambda x: x.score)
-        paired_players: list[Player] = []
+    def true_create_pairings(self) -> list[tuple[Player, Player]]:
+        ranked_players = self.get_rankings()
+        pairings: list[Player] = []
         while len(ranked_players) != 0:
-            player_1 = ranked_players.pop(0)
-            for index, player_2 in enumerate(ranked_players):
-                if player_2 not in player_1.opponents:
+            pair = [ranked_players.pop(0)]
+
+            for index, opponent in enumerate(ranked_players):
+                if opponent not in pair[0].opponents:
                     ranked_players.pop(index)
-                    paired_players.append((player_1, player_2))
+                    pair.append(opponent)
                     break
+            
+            if len(pair) != 2:
+                pair.append(self._buy)
+            
+            pairings.append(tuple(pair))
+        return pairings
+    
+    def get_rankings(self) -> list[Player]:
+        players = self.players.copy()
+        if self.round == 1:
+            random.shuffle(players)
+        rankings: list[Player] = []
+        scores = {player.score for player in players}
+        for score in sorted(scores, reverse=True):
+            rankings.extend([player for player 
+                             in sorted(players, key=lambda p: p.opponents_score(), reverse=True)
+                             if player.score == score])
+        return rankings
+    
+    def end_round(self, results: dict[tuple[Player, Player], tuple[int, int]]) -> None:
+        # print([p.score for p in self.players])
+        # print([p.opponents_score() for p in self.players])
+        
+        for pair, wins in results.items():
+            player_1, player_2 = pair
+            wins_1, wins_2 = wins
+            
+            if wins_1 > wins_2:
+                player_1.score += 3
+            elif wins_1 < wins_2:
+                player_2.score += 3
+            else:
+                player_1.score += 1
+                player_2.score += 1
+            
+            player_1.opponents.append(player_2)
+            player_2.opponents.append(player_1)
+        
+        # print([p.score for p in self.players])
+        # print([p.opponents_score() for p in self.players])

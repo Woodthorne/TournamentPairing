@@ -16,25 +16,31 @@ from PySide6.QtWidgets import (
 from logic import Logic
 from player import Player
 
+
 class Window(QMainWindow):
     def __init__(self, bll: Logic):
         super(Window, self).__init__()
         self._bll = bll
         
         self.setWindowTitle('Tournament Organizer')
-        self.layout().setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        # self.layout().setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
         
         self.switch_menu(Registration)
     
-    def switch_menu(self, menu_class: QWidget, **kwargs) -> None:
+    def switch_menu(self, menu_class: 'Menu', **kwargs) -> None:
         self.setCentralWidget(menu_class(self, self._bll, **kwargs))
-    
 
-class Registration(QWidget):
+
+class Menu(QWidget):
     def __init__(self, root: Window, bll: Logic):
         super().__init__()
         self._root = root
         self._bll = bll
+
+
+class Registration(Menu):
+    def __init__(self, root, bll):
+        super().__init__(root, bll)
     
         group = QGroupBox('Registration')
         name_scroll = self._create_name_area()
@@ -49,7 +55,6 @@ class Registration(QWidget):
         layout.addWidget(group)
         self.setLayout(layout)
 
-
     def _create_name_area(self) -> QScrollArea:
         scroll = QScrollArea()
         self.names = QWidget()
@@ -57,7 +62,8 @@ class Registration(QWidget):
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setWidget(self.names)
-        scroll.setFixedHeight(190)
+        scroll.setMinimumHeight(190)
+        # scroll.setFixedHeight(350)
         return scroll
     
     def _create_name_input(self) -> QWidget:
@@ -122,62 +128,39 @@ class Registration(QWidget):
         self._name_field.setText('')
     
     def _start_tournament(self) -> None:
-        self._bll.setup_tournament()
-        self._root.switch_menu(TournamentRound)
+        if self._bll.next_round():
+            self._root.switch_menu(TournamentRound)
 
 
-class TournamentRound(QWidget):
-    def __init__(self, root: Window, bll: Logic):
-        super().__init__()
-        self._root = root
-        self._bll = bll
+class TournamentRound(Menu):
+    def __init__(self, root, bll):
+        super().__init__(root, bll)
         
         group = QGroupBox(f'Round {self._bll.round}')
         pairing_scroll = self._create_pairing_list()
-        # inputs = self._create_inputs()
+        end_button = QPushButton('End Round')
+        end_button.pressed.connect(self._end_round)
         
         group_layout = QVBoxLayout()
         group_layout.addWidget(pairing_scroll)
-        # group_layout.addWidget(inputs)
+        group_layout.addWidget(end_button)
         group.setLayout(group_layout)
 
         layout = QVBoxLayout()
         layout.addWidget(group)
         self.setLayout(layout)
 
-
-
     def _create_pairing_list(self) -> QWidget:
-        pairings = self._bll.create_pairings()
+        pairings = self._bll.true_create_pairings()
+        self.matches = len(pairings)
+        self.results: dict[tuple[Player, Player], tuple[int, int]] = {}
+        self.confirmed_results = 0
 
         scroll = QScrollArea()
         self.pairings = QWidget()
-        self.round_wins: dict[Player, int] = {}
         widget_tuples: list[tuple[QLabel, QLineEdit, QLabel, QLineEdit, QPushButton]] = []
         for player_1, player_2 in pairings:
-            label_1 = QLabel(player_1.name)
-            input_1 = QLineEdit()
-            input_1.setMaxLength(1)
-            input_1.setMaximumWidth(20)
-            label_2 = QLabel(player_2.name)
-            input_2 = QLineEdit()
-            input_2.setMaxLength(1)
-            input_2.setMaximumWidth(20)
-            
-            button = QPushButton('Confirm')
-            
-            def _confirm_results() -> None: # TODO: MAKE WORK PROPERLY
-                if input_1.text().isnumeric() and input_2.text().isnumeric():
-                    print(input_1.text(), input_2.text())
-                    player_1.opponents[player_2] = (int(input_1.text()), int(input_2.text()))
-                    player_2.opponents[player_1] = (int(input_2.text()), int(input_1.text()))
-                    button.setText('Update')
-                    button.show()
-            print(_confirm_results)
-            
-            button.pressed.connect(_confirm_results)
-
-            widget_tuples.append((label_1, input_1, label_2, input_2, button))
+            widget_tuples.append(self._create_pairing_row(player_1, player_2))
 
         pairing_layout = QGridLayout()
         for r_index, widgets in enumerate(widget_tuples):
@@ -188,5 +171,129 @@ class TournamentRound(QWidget):
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidget(self.pairings)
+        scroll.setMinimumHeight(190)
         return scroll
     
+    def _create_pairing_row(self, player_1: Player, player_2: Player) -> tuple[QLabel, QLineEdit, QLabel, QLineEdit, QPushButton]:
+        label_1 = QLabel(player_1.name)
+        input_1 = QLineEdit()
+        input_1.setMaxLength(1)
+        input_1.setMaximumWidth(20)
+
+        label_2 = QLabel(player_2.name)
+        input_2 = QLineEdit()
+        input_2.setMaxLength(1)
+        input_2.setMaximumWidth(20)
+        
+        button = QPushButton('Confirm')
+        
+        def _confirm_results() -> None:
+            if input_1.text().isnumeric() and input_2.text().isnumeric():
+                print(input_1.text(), input_2.text())
+                self.results[(player_1,  player_2)] = (int(input_1.text()), int(input_2.text()))
+                if button.text() == 'Confirm':
+                    self.confirmed_results += 1
+                    button.setText('Update')
+                    button.show()
+        
+        button.pressed.connect(_confirm_results)
+
+        return (label_1, input_1, label_2, input_2, button)
+
+    def _end_round(self) -> None:
+        if self.confirmed_results == self.matches:
+            self._bll.end_round(self.results)
+            self._root.switch_menu(Standings)
+
+class Standings(Menu):
+    def __init__(self, root, bll):
+        super().__init__(root, bll)
+
+        group = QGroupBox(f'Round {self._bll.round} - Standings')
+        ranking_list = self._create_ranking_list()
+        next_button = QPushButton('Next Round')
+        next_button.pressed.connect(self._next_round)
+        
+        group_layout = QVBoxLayout()
+        group_layout.addWidget(ranking_list)
+        group_layout.addWidget(next_button)
+        group.setLayout(group_layout)
+
+        layout = QVBoxLayout()
+        layout.addWidget(group)
+        self.setLayout(layout)
+        
+    def _create_ranking_list(self) -> QWidget:
+        ranked_players = self._bll.get_rankings()
+
+        scroll = QScrollArea()
+        
+        player_list = QWidget()
+        player_tuples: list[tuple[QLabel, QLabel, QLabel, QLabel]] = []
+        for index, player in enumerate(ranked_players):
+            rank = QLabel(str(index + 1))
+            name = QLabel(player.name)
+            score = QLabel(str(player.score))
+            opp_score = QLabel(str(player.opponents_score()))
+            player_tuples.append((rank, name, score, opp_score))
+
+        player_layout = QGridLayout()
+        for r_index, widgets in enumerate(player_tuples):
+            for c_index, widget in enumerate(widgets):
+                player_layout.addWidget(widget, r_index, c_index)
+
+        player_list.setLayout(player_layout)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(player_list)
+        scroll.setMinimumHeight(190)
+        return scroll
+
+    def _next_round(self) -> None:
+        if self._bll.next_round():
+            self._root.switch_menu(TournamentRound)
+        else:
+            self._root.switch_menu(EndView)
+            # for player in self._bll.get_rankings():
+            #     print(player, player.opponents)
+
+class EndView(Menu):
+    def __init__(self, root, bll):
+        super().__init__(root, bll)
+
+        group = QGroupBox(f'Tournament Ended - Standings')
+        ranking_list = self._create_ranking_list()
+        
+        group_layout = QVBoxLayout()
+        group_layout.addWidget(ranking_list)
+        group.setLayout(group_layout)
+
+        layout = QVBoxLayout()
+        layout.addWidget(group)
+        self.setLayout(layout)
+        
+    def _create_ranking_list(self) -> QWidget:
+        ranked_players = self._bll.get_rankings()
+
+        scroll = QScrollArea()
+        
+        player_list = QWidget()
+        player_tuples: list[tuple[QLabel, QLabel, QLabel, QLabel]] = []
+        for index, player in enumerate(ranked_players):
+            rank = QLabel(str(index + 1))
+            name = QLabel(player.name)
+            score = QLabel(str(player.score))
+            opp_score = QLabel(str(player.opponents_score()))
+            player_tuples.append((rank, name, score, opp_score))
+
+        player_layout = QGridLayout()
+        for r_index, widgets in enumerate(player_tuples):
+            for c_index, widget in enumerate(widgets):
+                player_layout.addWidget(widget, r_index, c_index)
+
+        player_list.setLayout(player_layout)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(player_list)
+        scroll.setMinimumHeight(190)
+        return scroll
